@@ -1,0 +1,875 @@
+import ssl
+import telebot
+import hashlib
+import re
+import smtplib
+import shelve
+import os
+import pygsheets
+import time
+import calendar
+import time
+import calendar
+import numpy as np
+import datetime
+import threading
+import random
+
+bot = telebot.TeleBot('1691554727:AAEHeRNlEOcNVYsFQqdcD0Zdrv0y47pmCeg')
+base = '/Users/dima/Desktop/1/bot/projectbot/BASE0'
+aid = 649157112
+N = 2  # Количество работающих машинок #
+X, Y = 60, 20  # размеры таблицы
+#### Хэш таблицы + класс пользователя
+class Person():
+    def __init__(self, mail="None", name="None", level=0, stirka_1="None", stirka_2="None"):
+        self.level = level
+        self.mail = mail
+        self.name = name
+        self.stikra_1 = stirka_1
+        self.stikra_2 = stirka_2
+
+    def add_name(self, name):
+        self.name = name
+
+    def print(self):
+        print(self.mail, self.name, self.level, self.stikra_1, self.stikra_2)
+
+    def set_level(self, x):
+        self.level = x
+
+    def set_mail(self, mail_):
+        self.mail = mail_
+
+    def set_stika_1(self, x):
+        self.stikra_1 = x
+
+    def set_stika_2(self, x):
+        self.stikra_2 = x
+
+    def get(self):
+        return (self.mail, self.name, str(self.level), self.stikra_1, self.stikra_2)
+
+
+hashes = {}  # hash: <id,mail>
+dhashes = {}
+dict = {}  # id:<Person>
+d = shelve.open(base)
+for i in d:
+    print(i, d[i])
+    a = Person(d[i][0])
+    a.add_name(d[i][1])
+    a.set_level(int(d[i][2]))
+    a.set_stika_1(d[i][3])
+    a.set_stika_2(d[i][4])
+    dict[int(i)] = a
+
+#### ТАБЛИЦА
+c = pygsheets.authorize(service_file='/Users/dima/Desktop/1/bot/credentials.json')
+s = c.open(c.spreadsheet_titles()[0])
+worksheet = s.worksheet()
+ressheet = s.worksheets()[1]
+SBASE = worksheet.get_values('A1', 'O58', returnas='matrix', majdim="COLM")
+C = worksheet.get_col(1)
+R = worksheet.get_row(1)
+
+
+def correct(data, time):
+    if (data == '' or time == ''):
+        return (False)
+    x1, x2 = -1, -1
+    for i in range(Y):
+        if (R[i].startswith(time)):
+            x2 = i
+            break
+    for i in range(X):
+        if (C[i].startswith(data)):
+            x1 = i
+            break
+    A = (x1 != -1 and x2 != -1 and data[0].isnumeric() and time[0].isnumeric())
+    return A
+
+
+def findcrd(data, time):
+    if (data == '' or time == ''):
+        return (-1, -1)
+    x1, x2 = -1, -1
+    for i in range(Y):
+        if (R[i].startswith(time)):
+            x2 = i
+            break
+    for i in range(X):
+        if (C[i].startswith(data)):
+            x1 = i
+            break
+    A = (x1 != -1 and x2 != -1 and data[0].isnumeric() and time[0].isnumeric())
+    return (x1, x2)
+
+
+def prnt(A):
+    for i in A:
+        print(i)
+
+
+def its_free(data, time):
+    if (not correct(data, time)):
+        return False
+    x1, x2 = findcrd(data, time)
+    for i in range(N):
+        if (SBASE[x2][x1 + i + 1].find('свободно') != -1):
+            return True
+
+
+def cleen_table():
+    global SBASE
+    RESBASE = ressheet.get_values('B3', 'O58', returnas='matrix', majdim="ROWS")
+    worksheet.update_values(crange='B3', values=RESBASE)
+    SBASE = worksheet.get_values('A1', 'O58', returnas='matrix', majdim="COLM")
+
+
+def restore_table_from_dict():
+    global SBASE
+    for i in dict:
+        a = dict[i]
+        if dict[i].level in {4,5,6}:
+            second_name, komnata = a.name.split(' ')[0], a.name.split(' ')[2]
+            if dict[i].stikra_1 != 'None':
+                time = dict[i].stikra_1.split('#')
+                data = time[0][:2]
+                time = time[1][:2]
+                x, y = findcrd(data, time)
+                for j in range(N):
+                    if (SBASE[y][x + 1 + j].find('свободно') != -1):
+                        SBASE[y][x + 1 + j] = second_name
+                        SBASE[y + 1][x + 1 + j] = komnata
+                        break
+            if dict[i].stikra_2 != 'None':
+                time = dict[i].stikra_2.split('#')
+                data = time[0][:2]
+                time = time[1][:2]
+                x, y = findcrd(data, time)
+                for j in range(N):
+                    if (SBASE[y][x + 1 + j].find('свободно') != -1):
+                        SBASE[y][x + 1 + j] = second_name
+                        SBASE[y + 1][x + 1 + j] = komnata
+                        break
+        SBASE_TRANSOPE = [list(k) for k in zip(*SBASE[1:])]
+        worksheet.update_values(crange='B3', values=SBASE_TRANSOPE[2:], majordim='ROWS')
+
+
+def find_free_space_cord(data, time):
+    if (its_free(data, time)):
+        x1, x2 = findcrd(data, time)
+        for i in range(N):
+            if (SBASE[x2][x1 + i + 1].find('свободно') != -1):
+                return (x1 + i + 1, x2)
+    else:
+        return (100, 30)
+
+
+def put_in_table(data, time, user_info):
+    if not its_free(data, time):
+        return False
+    x1, x2 = find_free_space_cord(data, time)
+    SBASE[x2][x1] = str(user_info[0])  # '''x1 + 1, x2 + 1'''
+    SBASE[x2 + 1][x1] = str(user_info[1])
+    #worksheet.cell((x1 + 1, x2 + 1)).set_value(str(user_info[0]))
+    #worksheet.cell((x1 + 1, x2 + 2)).set_value(str(user_info[1]))
+    worksheet.update_values(crange=(x1 + 1,x2 + 1), values=[[str(user_info[0]),str(user_info[1])]])
+    return True
+
+
+def current_date_from_table():
+    return SBASE[0][2]
+
+
+def delete_all_zapisi():
+    global d
+    for i in dict:
+        dict[i].stikra_1 = 'None'
+        dict[i].stikra_2 = 'None'
+        d[str(i)] = dict[i].get()
+
+
+###### проверяющий поток
+context = ssl.create_default_context()
+
+
+###### Функции для регистрации + проверки
+def gen_hash():
+    hash = random.randint(1000, 9999)
+    return str(hash)
+
+
+def correct_mail(mail):
+    pattern = "[a-z|A-Z|.|0-9]+@g.nsu.ru"
+    prog = re.compile(pattern)
+    x = prog.fullmatch(mail)
+    return not (x is None)
+
+
+def send_to_mail(mail, hash):
+    port = 465  # For SSL
+    with smtplib.SMTP_SSL("smtp.gmail.com", port, context=context) as server:
+        server.login("stirka6bot@gmail.com", "QweQweAsd12Af")
+        print(mail, hash)
+        server.sendmail("stirka6bot@gmail.com", mail, hash)
+
+
+def mail_in_dict(mail):
+    for i in dict:
+        if dict[i].mail == mail:
+            return True
+    return False
+
+
+def id_in_dict(id):
+    for i in dict:
+        if i == id:
+            return True
+    return False
+
+
+def hash_in_hashes(hash):
+    for i in hashes:
+        if i == hash:
+            return True
+    return False
+
+
+def id_in_hashes(id):
+    for i in hashes:
+        if hashes[i][0] == id:
+            return True
+    return False
+
+
+### Обновление бд и таблицы
+def convert_time_from_db_to_datetime(string):
+    a = datetime.datetime.now()
+    t = string.split('#')[0].split('.')
+    if t[0][0] == '0':
+        day = t[0][1]
+    else:
+        day = t[0][:2]
+    if t[1][0] != ' ':
+        if t[1][0] == '0':
+            month = t[1][1]
+        else:
+            month = t[1][:2]
+    if t[1][1] == '0':
+        month = t[1][2]
+    else:
+        month = t[1][1:3]
+    b = datetime.date(2021, int(month), int(day))
+    return b
+
+def convert_time_from_table_to_datetime(date):
+    time = date.split('.')
+    if time[0][0] == '0':
+        day = int(time[0][1])
+    else:
+        day = int(time[0][:2])
+
+    if time[1][0] == '0':
+        month = int(time[1][1])
+    else:
+        month = int(time[1][:2])
+
+    return datetime.datetime(2021, month, day)
+
+
+def current_date_from_table():
+    return convert_time_from_table_to_datetime(SBASE[0][2])
+
+
+
+def update_time_bd():
+    global d
+    now = datetime.datetime.now().date()
+    for i in dict:
+        if dict[i].stikra_1 != 'None':
+            t = convert_time_from_db_to_datetime(dict[i].stikra_1)
+            if (t - now).days < 0 or (t-now).days > 14:
+                dict[i].set_stika_1('None')
+        if dict[i].stikra_2 != 'None':
+            t = convert_time_from_db_to_datetime(dict[i].stikra_2)
+            if (t - now).days < 0 or (t - now).days > 14:
+                dict[i].set_stika_2('None')
+        d[str(i)] = dict[i].get()
+# update_sbase():
+
+cleen_table()
+update_time_bd()
+restore_table_from_dict()
+
+count_working_threads = 0
+flag = False
+def threading_foo():
+    global d
+    global flag
+    global count_working_threads
+    while True:
+        time.sleep(2)
+        if str(datetime.datetime.now().time())[3:5] == '30':
+            try:
+                flag = True
+                while count_working_threads != 0:
+                    time.sleep(0.1)
+                res_base = shelve.open(
+                    '/Users/dima/Desktop/1/bot/projectbot/Res_base/rb_' + str(datetime.datetime.now())[:16])
+                for i in d:
+                    a = Person(d[i][0], d[i][1], d[i][2], d[i][3], d[i][4])
+                    res_base[str(i)] = a.get()
+                res_base.close()
+                flag = False
+                time.sleep(90)
+
+            except Exception:
+                print('Проблема с threading_foo(saves)')
+                flag = False
+                exit(0)
+        if str(datetime.datetime.now().time())[:5] == '23:58':
+            try:
+                flag = True
+                while count_working_threads != 0:
+                    time.sleep(0.1)
+                flag = False
+                time.sleep(240)
+                d.close()
+                d = shelve.open(base)
+                cleen_table()
+                update_time_bd()
+                restore_table_from_dict()
+                flag = True
+            except Exception:
+                print('Проблема с threading_foo(ночное обновление)')
+                flag = False
+                exit(0)
+
+x = threading.Thread(target=threading_foo)
+x.start()
+
+@bot.message_handler(commands=['start'])
+def start_message(message):
+    global d
+    global count_working_threads
+    count_working_threads += 1
+    try:
+        if message.from_user.id not in dict.keys():
+            markupm = telebot.types.InlineKeyboardMarkup()
+            markupm.add(telebot.types.InlineKeyboardButton(text='Регистрация', callback_data='reg1'))
+            a = Person()
+            dict[message.from_user.id] = a
+            d[str(message.from_user.id)] = a.get()
+            bot.send_message(message.from_user.id,
+                             'Привет!\nДля использования бота нужно зарегистрироваться, для этого тебе понадобится только почта НГУ',
+                             reply_markup=markupm)
+            count_working_threads -= 1
+        return
+    except Exception:
+        print('Ошибка в start_message у пользователя' + str(message.from_user.id))
+        count_working_threads -= 1
+        return
+
+
+@bot.message_handler(content_types=['text'])
+def message_handler(message):
+    global count_working_threads
+    print(count_working_threads)
+    global d
+    count_working_threads += 1
+    global flag
+    if flag:
+        bot.send_message(message.from_user.id, 'В настоящее время идет обновление таблицы, попробуйте через пару минут')
+        count_working_threads -= 1
+        return
+    #try:
+    words = message.text.split(' ')
+    if message.text == '/update_bd':
+            update_time_bd()
+            count_working_threads -= 1
+            return
+    if message.text == '/reset':
+            a = Person()
+            dict[message.from_user.id] = a
+            d[str(message.from_user.id)] = a.get()
+
+            markupm = telebot.types.InlineKeyboardMarkup()
+            markupm.add(telebot.types.InlineKeyboardButton(text='Регистрация', callback_data='reg1'))
+            bot.send_message(message.from_user.id,
+                             'Привет!\nДля использования бота нужно зарегестрироваться, для этого тебе понадобится только почта НГУ',
+                             reply_markup=markupm)
+            count_working_threads -= 1
+            return
+    if message.text == '/delzap':
+            delete_all_zapisi()
+            count_working_threads -= 1
+            return
+    if message.text == '/exit':
+            print('Бот выключился')
+            d.close()
+            quit(0)
+            return
+    if message.text == '/cleen':
+            cleen_table()
+            count_working_threads -= 1
+            return
+    if message.text == '/restore_table':
+            restore_table_from_dict()
+            count_working_threads -= 1
+            return
+    if message.text == '/sbase':
+            for i in SBASE:
+                print(i, '\n\n\n')
+            count_working_threads -= 1
+            return
+    if message.text == '/id':
+            bot.send_message(message.from_user.id, message.from_user.id)
+            count_working_threads -= 1
+            return
+    if message.text == '/table_date':
+            bot.send_message(message.from_user.id, current_date_from_table())
+            count_working_threads -= 1
+            return
+    if message.text == '/real_date':
+            bot.send_message(message.from_user.id, str(datetime.datetime.now().date()))
+            count_working_threads -= 1
+            return
+    if message.text == '/hashes' and message.from_user.id == aid:
+            print(hashes)
+            count_working_threads -= 1
+            return
+    if message.text == '/base' and message.from_user.id == aid:
+
+            for i in d:
+                print(i, d[i])
+            count_working_threads -= 1
+            return
+    if message.from_user.id not in dict.keys():
+            markupm = telebot.types.InlineKeyboardMarkup()
+            markupm.add(telebot.types.InlineKeyboardButton(text='Регистрация', callback_data='reg1'))
+            a = Person()
+            dict[message.from_user.id] = a
+            d[str(message.from_user.id)] = a.get()
+            bot.send_message(message.from_user.id,
+                             'Привет!\nДля использования бота нужно зарегестрироваться, для этого тебе понадобится только почта НГУ',
+                             reply_markup=markupm)
+            count_working_threads -= 1
+            return
+    if dict[message.from_user.id].level == 0:
+            markupm = telebot.types.InlineKeyboardMarkup()
+            markupm.add(telebot.types.InlineKeyboardButton(text='Регистрация', callback_data='reg1'))
+            bot.send_message(message.from_user.id,
+                             'Привет!\nДля использования бота нужно зарегестрироваться, для этого тебе понадобится только почта НГУ',
+                             reply_markup=markupm)
+            count_working_threads -= 1
+            return
+    if dict[message.from_user.id].level == 1:
+            if (len(words) < 1 or (not correct_mail(words[0])) or mail_in_dict(words[0]) or (
+                    mail_in_dict(dict[message.from_user.id].mail) and (dict[message.from_user.id].mail != 'None'))):
+                if len(words) < 1:
+                    bot.send_message(message.from_user.id,
+                                     "Неверный формат для электронной почты \n Введите почту повторно:")
+                    count_working_threads -= 1
+                    return
+                if mail_in_dict(words[0]):
+                    bot.send_message(message.from_user.id,
+                                     "Пользователь с данной почтой уже зарегестрирован")
+                    count_working_threads -= 1
+                    return
+                if (mail_in_dict(dict[message.from_user.id].mail)) and (dict[message.from_user.id].mail != 'None'):
+                    bot.send_message(message.from_user.id,
+                                     "У вас уже привязана почта, если у вас сменилась почта напишите в поддержку")
+                    count_working_threads -= 1
+                    return
+                if not correct_mail(words[0]):
+                    bot.send_message(message.from_user.id,
+                                     "Неверный формат для электронной почты \n Введите почту повторно:")
+                    count_working_threads -= 1
+                    return
+            else:
+                for i in hashes.keys():
+                    if hashes[i][0] == message.from_user.id:
+                        hashes.pop(i)
+                        break
+                a = dict[message.from_user.id]
+                a.set_level(2)
+                dict[message.from_user.id] = a
+                ## уровень когда отправили код
+
+                d[str(message.from_user.id)] = a.get()
+
+                markupm = telebot.types.InlineKeyboardMarkup()
+                markupm.add(telebot.types.InlineKeyboardButton(text='Указать другую почту', callback_data='reg1'))
+                # markupm.add(telebot.types.InlineKeyboardButton(text='Отправить новый код', callback_data='newhash'))
+                bot.send_message(message.from_user.id, "На указанную почту отправлен код, пожалуйста введите его:",
+                                 reply_markup=markupm)
+                # Отправка в на почту
+                # + заполнение в базу <hash, user_id, mail>
+                hash = gen_hash()
+                while (hash in hashes.keys()):
+                    hash = gen_hash()
+                hashes[hash] = message.from_user.id, words[0]
+                send_to_mail(words[0], hash)
+                count_working_threads -= 1
+                return
+    if dict[message.from_user.id].level == 2:  ## ждем хэш
+            if len(words) >= 1 and words[0] in hashes.keys() and not mail_in_dict(words[0]):
+                id, mail = hashes[words[0]]
+                if id == message.from_user.id:
+                    a = Person(mail=mail, level=3)  # "уже подтверждили хэша"
+                    dict[id] = a
+                    # id : mail, name
+                    d[str(id)] = a.get()
+
+                    hashes.pop(words[0])
+                    markupm = telebot.types.InlineKeyboardMarkup()
+                    markupm.add(telebot.types.InlineKeyboardButton(text='Указать другую почту', callback_data='reg1'))
+                    bot.send_message(message.from_user.id,
+                                     "Авторизация прошла успешно.\nПредставьтесь: Фамилия Имя номер комнты",
+                                     reply_markup=markupm)
+                    count_working_threads -= 1
+                    return
+                else:
+                    markupm = telebot.types.InlineKeyboardMarkup()
+                    markupm.add(telebot.types.InlineKeyboardButton(text='Указать другую почту', callback_data='reg1'))
+                    bot.send_message(message.from_user.id,
+                                     "Ошибка, введите код с усстройства с которого вводили почту ",
+                                     reply_markup=markupm)
+                    count_working_threads -= 1
+                    return
+            if not (len(words) >= 1 and words[0] in hashes.keys()):
+                markupm = telebot.types.InlineKeyboardMarkup()
+                markupm.add(telebot.types.InlineKeyboardButton(text='Указать другую почту', callback_data='reg1'))
+                bot.send_message(message.from_user.id, "Неверный код, попробуйте еще раз:", reply_markup=markupm)
+                count_working_threads -= 1
+                return
+            if mail_in_dict(words[0]):
+                markupm = telebot.types.InlineKeyboardMarkup()
+                markupm.add(telebot.types.InlineKeyboardButton(text='Указать другую почту', callback_data='reg1'))
+                bot.send_message(message.from_user.id, "Данная почта уже привязана", reply_markup=markupm)
+                count_working_threads -= 1
+                return
+    if dict[message.from_user.id].level == 3:
+            if len(words) >= 3 and words[2][:-1].isnumeric() and words[0].isalpha() and words[1].isalpha():
+                name = ' '.join(words[0:])
+                a = dict[message.from_user.id]
+                a.set_level(4)
+                a.add_name(name)
+
+                d[str(message.from_user.id)] = a.get()
+
+                # №КОгда будешь добавлять таблицу не забудь обновлять имя при изменении!!!!!!!!!!!!
+                markupm = telebot.types.InlineKeyboardMarkup()
+                markupm.add(telebot.types.InlineKeyboardButton(text='Запись на стирку', callback_data='zapis'))
+                markupm.add(telebot.types.InlineKeyboardButton(text='Удалить запись', callback_data='del'))
+                markupm.add(telebot.types.InlineKeyboardButton(text='Таблица', callback_data='link'))
+                # markupm.row(telebot.types.InlineKeyboardButton(text='Отвязать почту', callback_data='prep_to_reg1'),telebot.types.InlineKeyboardButton(text='Информация', callback_data='info'))
+
+                bot.send_message(message.from_user.id, "Привет, " + (name.split(' '))[1] + "!", reply_markup=markupm)
+                count_working_threads -= 1
+                return
+            else:
+                markupm = telebot.types.InlineKeyboardMarkup()
+                markupm.add(telebot.types.InlineKeyboardButton(text='Указать другую почту', callback_data='reg1'))
+                bot.send_message(message.from_user.id,
+                                 "Неверный формат. Поробуйте еще раз (фамилия имя номер комнаты)", reply_markup=markupm)
+                count_working_threads -= 1
+                return
+    if dict[message.from_user.id].level == 4:
+            markupm = telebot.types.InlineKeyboardMarkup()
+            markupm.add(telebot.types.InlineKeyboardButton(text='Запись на стирку', callback_data='zapis'))
+            markupm.add(telebot.types.InlineKeyboardButton(text='Удалить запись', callback_data='del'))
+            markupm.add(telebot.types.InlineKeyboardButton(text='Таблица', callback_data='link'))
+            bot.send_message(message.from_user.id, "Выберите нужный раздел", reply_markup=markupm)
+            count_working_threads -= 1
+            return
+    if dict[message.from_user.id].level in {5,6}:
+            if len(words) >= 2 and len(words[0]) >= 2 and len(words[1]) >= 2 and words[0][0].isnumeric() and words[1][
+                0].isnumeric() and correct(words[0], words[1]):
+                b = dict[message.from_user.id].name.split(' ')
+                if (put_in_table(words[0], words[1], (b[0], b[2]))):
+                    x, y = findcrd(words[0], words[1])
+                    data = str(worksheet.cell((x + 1, 1)).value)
+                    time = str(worksheet.cell((1, y + 1)).value)
+                    a = dict[message.from_user.id]
+                    a.set_level(4)
+                    if a.stikra_1 == 'None':
+                        a.set_stika_1(data + '#' + time)
+                    else:
+                        a.set_stika_2(data + '#' + time)
+                    dict[message.from_user.id] = a
+                    # id : mail, name
+                    d[str(message.from_user.id)] = a.get()
+                    markupm = telebot.types.InlineKeyboardMarkup()
+                    markupm.add(telebot.types.InlineKeyboardButton(text='Запись на стирку', callback_data='zapis'))
+                    markupm.add(telebot.types.InlineKeyboardButton(text='Удалить запись', callback_data='del'))
+                    markupm.add(telebot.types.InlineKeyboardButton(text='Таблица', callback_data='link'))
+                    bot.send_message(message.from_user.id, "Вы успешно записанны.", reply_markup=markupm)
+                    count_working_threads -= 1
+                    return
+                else:
+                    markupm = telebot.types.InlineKeyboardMarkup()
+                    markupm.add(telebot.types.InlineKeyboardButton(text='Таблица', callback_data='link'))
+                    markupm.add(telebot.types.InlineKeyboardButton(text='Назад', callback_data='back to main'))
+                    bot.send_message(message.from_user.id, "Выбранное время уже занято, выбретие новое время:",
+                                     reply_markup=markupm)
+                    count_working_threads -= 1
+                    return
+            else:
+                markupm = telebot.types.InlineKeyboardMarkup()
+                markupm.add(telebot.types.InlineKeyboardButton(text='Таблица', callback_data='link'))
+                markupm.add(telebot.types.InlineKeyboardButton(text='Назад', callback_data='back to main'))
+                bot.send_message(message.from_user.id, "Некоректное время , введите новое время:",
+                                 reply_markup=markupm)
+                count_working_threads -= 1
+                return
+            count_working_threads -= 1
+    count_working_threads -= 1
+    #except Exception:
+        #print('message_handler')
+        #count_working_threads -= 1
+        #d.close()
+
+
+@bot.callback_query_handler(func=lambda call: True)
+def query_handler(call):
+    global count_working_threads
+    print(count_working_threads)
+    global d
+    count_working_threads += 1
+    global flag
+    if flag:
+        bot.send_message(call.message.chat.id,'В настоящее время идет обновление таблицы, попробуйте через пару минут')
+        count_working_threads -= 1
+        return
+    try:
+        if call.data == 'reg1':
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+            if dict[call.message.chat.id].level in {4, 5}:
+                count_working_threads -= 1
+                return
+            bot.answer_callback_query(callback_query_id=call.id,
+                                      text='Внимание регистрация возможно только при помощи почты НГУ)')
+            a = Person(level=1)
+            dict[call.message.chat.id] = a
+            d[str(call.message.chat.id)] = a.get()
+            bot.send_message(call.message.chat.id, "Введите свою почту:",
+                             reply_markup=telebot.types.ReplyKeyboardRemove())
+            count_working_threads -= 1
+            return
+        if call.data == 'zapis':
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+            a = dict[call.message.chat.id]
+            if dict[call.message.chat.id].level not in {4, 5, 6}:
+                count_working_threads -= 1
+                return
+            if a.stikra_1 != 'None' and a.stikra_2 != 'None':
+                bot.answer_callback_query(callback_query_id=call.id,
+                                          text='Запись невозможна')
+                markupm = telebot.types.InlineKeyboardMarkup()
+                markupm.add(telebot.types.InlineKeyboardButton(text='Запись на стирку', callback_data='zapis'))
+                markupm.add(telebot.types.InlineKeyboardButton(text='Удалить запись', callback_data='del'))
+                markupm.add(telebot.types.InlineKeyboardButton(text='Таблица', callback_data='link'))
+                bot.send_message(call.message.chat.id,
+                                 "Вы уже записаны на две стирки, для новой записи удалите старую запись",
+                                 reply_markup=markupm)
+                count_working_threads -= 1
+                return
+            if a.stikra_1 == 'None' or a.stikra_2 == 'None':
+                a.set_level(5)
+
+                dict[call.message.chat.id] = a
+                d[str(call.message.chat.id)] = a.get()
+                bot.answer_callback_query(callback_query_id=call.id,
+                                          text='Для записи воспользуйтесь таблицей')
+                markupm = telebot.types.InlineKeyboardMarkup()
+                markupm.add(telebot.types.InlineKeyboardButton(text='Таблица', callback_data='link'))
+                markupm.add(telebot.types.InlineKeyboardButton(text='Назад', callback_data='back to main'))
+                # markupm.row(telebot.types.InlineKeyboardButton(text='Отвязать почту', callback_data='prep_to_reg1'),telebot.types.InlineKeyboardButton(text='Информация', callback_data='info'))
+                bot.send_message(call.message.chat.id,
+                                 "Введите дату и время на которое хотите записаться, в следующем формате: Дата Время \nПример: еслии хотите записаться 22.09.21 на время: 14:00-16:00 необходимо написать : 22 14",
+                                 reply_markup=markupm)
+                count_working_threads -= 1
+                return
+        if call.data == 'del':
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+            a = dict[call.message.chat.id]
+            if dict[call.message.chat.id].level not in {4, 6}:
+                count_working_threads -= 1
+                return
+            if a.stikra_1 == 'None' and a.stikra_2 == 'None':
+                bot.answer_callback_query(callback_query_id=call.id,
+                                          text='У вас нет запланированных стирок')
+                markupm = telebot.types.InlineKeyboardMarkup()
+                markupm.add(telebot.types.InlineKeyboardButton(text='Запись на стирку', callback_data='zapis'))
+                markupm.add(telebot.types.InlineKeyboardButton(text='Удалить запись', callback_data='del'))
+                markupm.add(telebot.types.InlineKeyboardButton(text='Таблица', callback_data='link'))
+                bot.send_message(call.message.chat.id,
+                                 "У вас нету запланированных записей для удаления",
+                                 reply_markup=markupm)
+                count_working_threads -= 1
+                return
+            else:
+                stirka_1 = a.stikra_1.split('#')
+                stirka_2 = a.stikra_2.split('#')
+                a.set_level(6)
+                dict[call.message.chat.id] = a
+                d[str(call.message.chat.id)] = a.get()
+
+                markupm = telebot.types.InlineKeyboardMarkup()
+                if (a.stikra_1 != 'None'):
+                    markupm.add(telebot.types.InlineKeyboardButton(text=stirka_1[1] + '  ' + stirka_1[0],
+                                                                   callback_data=a.stikra_1 + "del"))
+                if (a.stikra_2 != 'None'):
+                    markupm.add(telebot.types.InlineKeyboardButton(text=stirka_2[1] + '  ' + stirka_2[0],
+                                                                   callback_data=a.stikra_2 + "del"))
+                markupm.add(telebot.types.InlineKeyboardButton(text='Назад', callback_data='back to main'))
+                bot.send_message(call.message.chat.id, "Выберите запись которую вы хотите удалить",
+                                 reply_markup=markupm)
+                count_working_threads -= 1
+                return
+        if call.data == 'link':
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+            if dict[call.message.chat.id].level not in {4, 5, 6}:
+                count_working_threads -= 1
+                return
+            if dict[call.message.chat.id].level == 5:
+                markupm = telebot.types.InlineKeyboardMarkup()
+                markupm.add(telebot.types.InlineKeyboardButton(text='Назад', callback_data='back to main'))
+                bot.send_message(call.message.chat.id,
+                                 "https://docs.google.com/spreadsheets/d/12pnQn4fnbX3hpR3RdCsLgER14MWAA5b3T7U2e2_oaLc/edit#gid=0 \nВведите дату и время на которое хотите записаться, в следующем формате: Дата Время",
+                                 reply_markup=markupm)
+                count_working_threads -= 1
+                return
+            markupm = telebot.types.InlineKeyboardMarkup()
+            markupm.add(telebot.types.InlineKeyboardButton(text='Назад', callback_data='back to main'))
+            bot.send_message(call.message.chat.id,
+                             "https://docs.google.com/spreadsheets/d/12pnQn4fnbX3hpR3RdCsLgER14MWAA5b3T7U2e2_oaLc/edit#gid=0",
+                             reply_markup=markupm)
+            count_working_threads -= 1
+            return
+        if call.data == 'back to main':
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+            if dict[call.message.chat.id].level not in {4, 5, 6}:
+                count_working_threads -= 1
+                return
+            if dict[call.message.chat.id].level == 5:
+                a = dict[call.message.chat.id]
+                a.set_level(4)
+                dict[call.message.chat.id] = a
+                d[str(call.message.chat.id)] = a.get()
+                markupm = telebot.types.InlineKeyboardMarkup()
+                markupm.add(telebot.types.InlineKeyboardButton(text='Запись на стирку', callback_data='zapis'))
+                markupm.add(telebot.types.InlineKeyboardButton(text='Удалить запись', callback_data='del'))
+                markupm.add(telebot.types.InlineKeyboardButton(text='Таблица', callback_data='link'))
+                bot.send_message(call.message.chat.id, "Выберите нужный пункт", reply_markup=markupm)
+                count_working_threads -= 1
+                return
+            if dict[call.message.chat.id].level == 4:
+                markupm = telebot.types.InlineKeyboardMarkup()
+                markupm.add(telebot.types.InlineKeyboardButton(text='Запись на стирку', callback_data='zapis'))
+                markupm.add(telebot.types.InlineKeyboardButton(text='Удалить запись', callback_data='del'))
+                markupm.add(telebot.types.InlineKeyboardButton(text='Таблица', callback_data='link'))
+                bot.send_message(call.message.chat.id, "Выберите нужный пункт", reply_markup=markupm)
+                count_working_threads -= 1
+                return
+            if dict[call.message.chat.id].level == 6:
+                a = dict[call.message.chat.id]
+                a.set_level(4)
+                dict[call.message.chat.id] = a
+                d[str(call.message.chat.id)] = a.get()
+                markupm = telebot.types.InlineKeyboardMarkup()
+                markupm.add(telebot.types.InlineKeyboardButton(text='Запись на стирку', callback_data='zapis'))
+                markupm.add(telebot.types.InlineKeyboardButton(text='Удалить запись', callback_data='del'))
+                markupm.add(telebot.types.InlineKeyboardButton(text='Таблица', callback_data='link'))
+                bot.send_message(call.message.chat.id, "Выберите нужный пункт", reply_markup=markupm)
+                count_working_threads -= 1
+                return
+        if call.data.endswith('del'):
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+            if (dict[call.message.chat.id].level not in {4, 6}):
+                count_working_threads -= 1
+                return
+            a = dict[call.message.chat.id]
+            data = call.data.split("#")[0][:2]
+            time = call.data.split("#")[1][:2]
+            second_name, room = a.name.split(' ')[0], a.name.split(' ')[2]
+            if (correct(data, time)):
+                x, y = findcrd(data, time)
+                z = False
+                for i in range(N):
+                    if (str(SBASE[y][x + i + 1]) == second_name and str(SBASE[y + 1][x + i + 1]) == room):
+                        if a.stikra_1.split('#')[0].startswith(data) and a.stikra_1.split('#')[1].startswith(time):
+                            a.set_stika_1('None')
+                            a.set_level(4)
+                            SBASE[y][x + i + 1] = 'свободно'
+                            SBASE[y + 1][x + i + 1] = ''
+                            worksheet.cell((x + i + 2, y + 1)).set_value('свободно')
+                            worksheet.cell((x + i + 2, y + 2)).set_value('')
+                            dict[call.message.chat.id] = a
+                            d[str(call.message.chat.id)] = a.get()
+                            markupm = telebot.types.InlineKeyboardMarkup()
+                            markupm.add(
+                                telebot.types.InlineKeyboardButton(text='Запись на стирку', callback_data='zapis'))
+                            markupm.add(telebot.types.InlineKeyboardButton(text='Удалить запись', callback_data='del'))
+                            markupm.add(telebot.types.InlineKeyboardButton(text='Таблица', callback_data='link'))
+                            bot.send_message(call.message.chat.id,
+                                             "Запись успешно удалена",
+                                             reply_markup=markupm)
+                            count_working_threads -= 1
+                            return
+                        if a.stikra_2.split('#')[0].startswith(data) and a.stikra_2.split('#')[1].startswith(time):
+                            a.set_stika_2('None')
+                            a.set_level(4)
+                            worksheet.cell((x + i + 2, y + 1)).set_value('свободно')
+                            worksheet.cell((x + i + 2, y + 2)).set_value('')
+                            SBASE[y][x + i + 1] = 'свободно'
+                            SBASE[y + 1][x + i + 1] = ''
+                            dict[call.message.chat.id] = a
+                            d[str(call.message.chat.id)] = a.get()
+                            markupm = telebot.types.InlineKeyboardMarkup()
+                            markupm.add(
+                                telebot.types.InlineKeyboardButton(text='Запись на стирку', callback_data='zapis'))
+                            markupm.add(telebot.types.InlineKeyboardButton(text='Удалить запись', callback_data='del'))
+                            markupm.add(telebot.types.InlineKeyboardButton(text='Таблица', callback_data='link'))
+                            bot.send_message(call.message.chat.id,
+                                             "Запись успешно удалена",
+                                             reply_markup=markupm)
+                            count_working_threads -= 1
+                            return
+                a.set_level(4)
+                dict[call.message.chat.id] = a
+                d[str(call.message.chat.id)] = a.get()
+                markupm = telebot.types.InlineKeyboardMarkup()
+                markupm.add(telebot.types.InlineKeyboardButton(text='Запись на стирку', callback_data='zapis'))
+                markupm.add(telebot.types.InlineKeyboardButton(text='Удалить запись', callback_data='del'))
+                markupm.add(telebot.types.InlineKeyboardButton(text='Таблица', callback_data='link'))
+                bot.send_message(call.message.chat.id,
+                                 "Не удалось удалить запись",
+                                 reply_markup=markupm)
+            else:
+                a.set_level(4)
+                dict[call.message.chat.id] = a
+                d[str(call.message.chat.id)] = a.get()
+                d[str(call.message.chat.id)] = a.get()
+                markupm = telebot.types.InlineKeyboardMarkup()
+                markupm.add(telebot.types.InlineKeyboardButton(text='Запись на стирку', callback_data='zapis'))
+                markupm.add(telebot.types.InlineKeyboardButton(text='Удалить запись', callback_data='del'))
+                markupm.add(telebot.types.InlineKeyboardButton(text='Таблица', callback_data='link'))
+                bot.send_message(call.message.chat.id,
+                                 "Неккоректное время",
+                                 reply_markup=markupm)
+                count_working_threads -= 1
+                return
+        count_working_threads -= 1
+        return
+    except BaseException:
+        print('не выполнилась кнопка')
+        count_working_threads -= 1
+        d.close()
+        return
+
+
+bot.polling(none_stop=True, interval=0)
